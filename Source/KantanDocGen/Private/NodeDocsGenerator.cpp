@@ -75,22 +75,31 @@ bool FNodeDocsGenerator::GT_Init(FString const& InDocsTitle, FString const& InOu
 
 UK2Node* FNodeDocsGenerator::GT_InitializeForSpawner(UBlueprintNodeSpawner* Spawner, UObject* SourceObject, FNodeProcessingState& OutState)
 {
-	if(!IsSpawnerDocumentable(Spawner, SourceObject->IsA< UBlueprint >()))
-	{
-		return nullptr;
-	}
+    if (!IsSpawnerDocumentable(Spawner, SourceObject->IsA< UBlueprint >()))
+    {
+        return nullptr;
+    }
 
-	// Spawn an instance into the graph
-	auto NodeInst = Spawner->Invoke(Graph.Get(), TSet< TWeakObjectPtr< UObject > >(), FVector2D(0, 0));
+    // Spawn an instance into the graph
+    auto NodeInst = Spawner->Invoke(Graph.Get(), TSet< TWeakObjectPtr< UObject > >(), FVector2D(0, 0));
 
-	// Currently Blueprint nodes only
-	auto K2NodeInst = Cast< UK2Node >(NodeInst);
+    // Currently Blueprint nodes only
+    auto K2NodeInst = Cast< UK2Node >(NodeInst);
 
-	if(K2NodeInst == nullptr)
-	{
-		UE_LOG(LogKantanDocGen, Warning, TEXT("Failed to create node from spawner of class %s with node class %s."), *Spawner->GetClass()->GetName(), Spawner->NodeClass ? *Spawner->NodeClass->GetName() : TEXT("None"));
-		return nullptr;
-	}
+    if (K2NodeInst == nullptr)
+    {
+        UE_LOG(LogKantanDocGen, Warning, TEXT("Failed to create node from spawner of class %s with node class %s."), *Spawner->GetClass()->GetName(), Spawner->NodeClass ? *Spawner->NodeClass->GetName() : TEXT("None"));
+        return nullptr;
+    }
+
+    if (IsSpawnerComponent(Spawner))
+    {
+        K2NodeInst->NodeComment = "Component";
+    }
+    if (IsSpawnerVariable(Spawner))
+    {
+        K2NodeInst->NodeComment = "Variable";
+    }
 
 	auto AssociatedClass = MapToAssociatedClass(K2NodeInst, SourceObject);
 
@@ -301,6 +310,8 @@ TSharedPtr< FXmlFile > FNodeDocsGenerator::InitClassDocXml(UClass* Class)
 	AppendChildCDATA(Root, TEXT("id"), GetClassDocId(Class));
 	AppendChildCDATA(Root, TEXT("display_name"), FBlueprintEditorUtils::GetFriendlyClassDisplayName(Class).ToString());
 	AppendChild(Root, TEXT("nodes"));
+    AppendChild(Root, TEXT("components"));
+    AppendChild(Root, TEXT("variables"));
 
 	return File;
 }
@@ -313,6 +324,26 @@ bool FNodeDocsGenerator::UpdateIndexDocWithClass(FXmlFile* DocFile, UClass* Clas
 	AppendChildCDATA(ClassElem, TEXT("id"), ClassId);
 	AppendChildCDATA(ClassElem, TEXT("display_name"), FBlueprintEditorUtils::GetFriendlyClassDisplayName(Class).ToString());
 	return true;
+}
+
+bool FNodeDocsGenerator::UpdateClassDocWithVariable(FXmlFile* DocFile, UEdGraphNode* Node)
+{
+    auto VariableId = GetNodeDocId(Node);
+    auto Variables = DocFile->GetRootNode()->FindChildNode(TEXT("variables"));
+    auto VariableElem = AppendChild(Variables, TEXT("variable"));
+    AppendChildCDATA(VariableElem, TEXT("id"), VariableId);
+    AppendChildCDATA(VariableElem, TEXT("shorttitle"), Node->GetNodeTitle(ENodeTitleType::ListView).ToString());
+    return true;
+}
+
+bool FNodeDocsGenerator::UpdateClassDocWithComponent(FXmlFile* DocFile, UEdGraphNode* Node)
+{
+    auto ComponentId = GetNodeDocId(Node);
+    auto Components = DocFile->GetRootNode()->FindChildNode(TEXT("components"));
+    auto ComponentElem = AppendChild(Components, TEXT("Component"));
+    AppendChildCDATA(ComponentElem, TEXT("id"), ComponentId);
+    AppendChildCDATA(ComponentElem, TEXT("shorttitle"), Node->GetNodeTitle(ENodeTitleType::ListView).ToString());
+    return true;
 }
 
 bool FNodeDocsGenerator::UpdateClassDocWithNode(FXmlFile* DocFile, UEdGraphNode* Node)
@@ -332,9 +363,17 @@ inline bool ShouldDocumentPin(UEdGraphPin* Pin)
 
 bool FNodeDocsGenerator::GenerateNodeDocs(UK2Node* Node, FNodeProcessingState& State)
 {
-	SCOPE_SECONDS_COUNTER(GenerateNodeDocsTime);
+    SCOPE_SECONDS_COUNTER(GenerateNodeDocsTime);
 
-	auto NodeDocsPath = State.ClassDocsPath / TEXT("nodes");
+    auto NodeDocsPath = State.ClassDocsPath / TEXT("nodes");
+    if (Node->NodeComment == "Component")
+    {
+        NodeDocsPath = State.ClassDocsPath / TEXT("components");
+    }
+    else if (Node->NodeComment == "Variable")
+    {
+        NodeDocsPath = State.ClassDocsPath / TEXT("variables");
+    }
 	FString DocFilePath = NodeDocsPath / (GetNodeDocId(Node) + TEXT(".xml"));
 
 	const FString FileTemplate = R"xxx(<?xml version="1.0" encoding="UTF-8"?>
@@ -412,10 +451,27 @@ bool FNodeDocsGenerator::GenerateNodeDocs(UK2Node* Node, FNodeProcessingState& S
 		return false;
 	}
 
-	if(!UpdateClassDocWithNode(State.ClassDocXml.Get(), Node))
-	{
-		return false;
-	}
+    if (Node->NodeComment == "Component")
+    {
+        if (!UpdateClassDocWithComponent(State.ClassDocXml.Get(), Node))
+        {
+            return false;
+        }
+    }
+    else if (Node->NodeComment == "Variable")
+    {
+        if (!UpdateClassDocWithVariable(State.ClassDocXml.Get(), Node))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        if (!UpdateClassDocWithNode(State.ClassDocXml.Get(), Node))
+        {
+            return false;
+        }
+    }
 	
 	return true;
 }
@@ -501,15 +557,27 @@ UClass* FNodeDocsGenerator::MapToAssociatedClass(UK2Node* NodeInst, UObject* Sou
 	}
 }
 
-bool FNodeDocsGenerator::IsSpawnerDocumentable(UBlueprintNodeSpawner* Spawner, bool bIsBlueprint)
+bool FNodeDocsGenerator::IsSpawnerComponent(UBlueprintNodeSpawner* Spawner)
 {
-	// Spawners of or deriving from the following classes will be excluded
-	static const TSubclassOf< UBlueprintNodeSpawner > ExcludedSpawnerClasses[] = {
-		UBlueprintVariableNodeSpawner::StaticClass(),
-		UBlueprintDelegateNodeSpawner::StaticClass(),
-		UBlueprintBoundNodeSpawner::StaticClass(),
-		UBlueprintComponentNodeSpawner::StaticClass(),
-	};
+    if (Spawner->IsA(UBlueprintComponentNodeSpawner::StaticClass()))
+    {
+        return true;
+    }
+    return false;
+}
+
+bool FNodeDocsGenerator::IsSpawnerVariable(UBlueprintNodeSpawner* Spawner)
+{
+    if (Spawner->IsA(UBlueprintVariableNodeSpawner::StaticClass()))
+    {
+        return true;
+    }
+    return false;
+}
+
+bool FNodeDocsGenerator::IsSpawnerDocumentable(UBlueprintNodeSpawner* Spawner, bool bIsBlueprint)
+{/**/
+
 
 	// Spawners of or deriving from the following classes will be excluded in a blueprint context
 	static const TSubclassOf< UBlueprintNodeSpawner > BlueprintOnlyExcludedSpawnerClasses[] = {
@@ -528,15 +596,6 @@ bool FNodeDocsGenerator::IsSpawnerDocumentable(UBlueprintNodeSpawner* Spawner, b
 	};
 
 	static const uint32 PermittedAccessSpecifiers = (FUNC_Public | FUNC_Protected);
-
-
-	for(auto ExclSpawnerClass : ExcludedSpawnerClasses)
-	{
-		if(Spawner->IsA(ExclSpawnerClass))
-		{
-			return false;
-		}
-	}
 
 	if(bIsBlueprint)
 	{

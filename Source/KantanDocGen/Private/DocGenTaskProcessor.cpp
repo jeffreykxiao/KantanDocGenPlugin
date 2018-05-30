@@ -94,19 +94,6 @@ void FDocGenTaskProcessor::ProcessTask(TSharedPtr< FDocGenTask > InTask)
 		return Current->DocGen->GT_Init(DocTitle, IntermediateDir, Current->Task->Settings.BlueprintContextClass);
 	};
 
-	auto GameThread_EnqueueEnumerators = [this]()
-	{
-		// @TODO: Specific class enumerator
-		Current->Enumerators.Enqueue(MakeShareable< FCompositeEnumerator< FNativeModuleEnumerator > >(new FCompositeEnumerator< FNativeModuleEnumerator >(Current->Task->Settings.NativeModules)));
-
-		TArray< FName > ContentPackagePaths;
-		for (auto const& Path : Current->Task->Settings.ContentPaths)
-		{
-			ContentPackagePaths.AddUnique(FName(*Path.Path));
-		}
-		Current->Enumerators.Enqueue(MakeShareable< FCompositeEnumerator< FContentPathEnumerator > >(new FCompositeEnumerator< FContentPathEnumerator >(ContentPackagePaths)));
-	};
-
 	auto GameThread_EnumerateNextObject = [this]() -> bool
 	{
 		Current->SourceObject.Reset();
@@ -192,7 +179,17 @@ void FDocGenTaskProcessor::ProcessTask(TSharedPtr< FDocGenTask > InTask)
 
 	FString IntermediateDir = FPaths::ProjectIntermediateDir() / TEXT("KantanDocGen") / Current->Task->Settings.DocumentationTitle;
 
-	DocGenThreads::RunOnGameThread(GameThread_EnqueueEnumerators);	
+	// @TODO: Specific class enumerator
+	Current->Enumerators.Enqueue(MakeShareable< FCompositeEnumerator< FNativeModuleEnumerator > >(new FCompositeEnumerator< FNativeModuleEnumerator >(Current->Task->Settings.NativeModules)));
+	
+	//Current->Enumerators.Enqueue(MakeShareable< FCompositeEnumerator< FContentPathEnumerator > >(new FCompositeEnumerator< FContentPathEnumerator >(Current->Task->Settings.ContentPaths)));
+	TArray< FName > ContentPackagePaths;
+	for(auto const& Path : Current->Task->Settings.ContentPaths)
+	{
+		ContentPackagePaths.AddUnique(FName(*Path.Path));
+			//*FPackageName::FilenameToLongPackageName(RawPath.Path)));
+	}
+	Current->Enumerators.Enqueue(MakeShareable< FCompositeEnumerator< FContentPathEnumerator > >(new FCompositeEnumerator< FContentPathEnumerator >(ContentPackagePaths)));
 
 	// Initialize the doc generator
 	Current->DocGen = MakeUnique< FNodeDocsGenerator >();
@@ -238,7 +235,10 @@ void FDocGenTaskProcessor::ProcessTask(TSharedPtr< FDocGenTask > InTask)
 					UE_LOG(LogKantanDocGen, Warning, TEXT("Failed to generate node image!"))
 					continue;
 				}
-
+               // if (NodeInst->GetBlueprintClassFromNode() ==  
+                {
+                    //something special
+                }
 				// Generate doc
 				if(!Current->DocGen->GenerateNodeDocs(NodeInst, NodeState))
 				{

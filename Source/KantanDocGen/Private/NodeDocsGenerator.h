@@ -59,6 +59,8 @@ protected:
 	TSharedPtr< FXmlFile > InitIndexXml(FString const& IndexTitle);
 	TSharedPtr< FXmlFile > InitClassDocXml(UClass* Class);
 	bool UpdateIndexDocWithClass(FXmlFile* DocFile, UClass* Class);
+    bool UpdateClassDocWithVariable(FXmlFile* DocFile, UEdGraphNode* Node);
+    bool UpdateClassDocWithComponent(FXmlFile* DocFile, UEdGraphNode* Node);
 	bool UpdateClassDocWithNode(FXmlFile* DocFile, UEdGraphNode* Node);
 	bool SaveIndexXml(FString const& OutDir);
 	bool SaveClassDocXml(FString const& OutDir);
@@ -67,6 +69,8 @@ protected:
 	static FString GetClassDocId(UClass* Class);
 	static FString GetNodeDocId(UEdGraphNode* Node);
 	static UClass* MapToAssociatedClass(UK2Node* NodeInst, UObject* Source);
+    static bool IsSpawnerComponent(UBlueprintNodeSpawner* Spawner);
+    static bool IsSpawnerVariable(UBlueprintNodeSpawner* Spawner);
 	static bool IsSpawnerDocumentable(UBlueprintNodeSpawner* Spawner, bool bIsBlueprint);
 
 protected:
